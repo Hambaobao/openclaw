@@ -25,7 +25,7 @@ import {
   type ReplyOperation,
   replyRunRegistry,
 } from "./reply-run-registry.js";
-import { refreshReplyOperationTyping } from "./reply-run-typing.js";
+import { notifyReplyRunInputIncluded, refreshReplyOperationTyping } from "./reply-run-typing.js";
 import { buildChannelSourceTurnId } from "./source-turn-id.js";
 import type { TypingSignaler } from "./typing-mode.js";
 
@@ -249,6 +249,15 @@ export async function runActiveReplySteer(
     }
     // Accepted or indeterminate input cannot be abandoned for replay, even
     // when the source's later adoption callback rejects.
+    if (
+      finalization.status === "accepted" &&
+      !finalization.aborted &&
+      !finalization.adoptionError &&
+      finalization.outcome.result?.transcriptCommit !== "unconfirmed" &&
+      activeReplyOperation
+    ) {
+      notifyReplyRunInputIncluded(activeReplyOperation, followupRun.turnAdoptionLifecycle);
+    }
     parked.consume("consumed");
     if (finalization.status === "indeterminate") {
       typing.cleanup();

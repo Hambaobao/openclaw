@@ -7,6 +7,7 @@ import {
 import type { SessionEntry } from "../../config/sessions.js";
 import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { TemplateContext } from "../templating.js";
+import { registerProcessingFeedbackCases } from "./agent-runner.runreplyagent.processing-feedback.cases.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { enqueueFollowupRun, parkSteerCandidate, type FollowupRun } from "./queue.js";
 import { clearFollowupDrainCallback } from "./queue/drain.js";
@@ -17,7 +18,7 @@ import {
 } from "./reply-operation-run-state.js";
 import { createReplyOperation, replyRunRegistry } from "./reply-run-registry.js";
 
-type SteeringReceiptFixture = {
+export type SteeringReceiptFixture = {
   createMinimalRun: (params: {
     opts?: InternalGetReplyOptions;
     isActive?: boolean;
@@ -48,6 +49,7 @@ export function registerSteeringReceiptCases({
   makeSessionFixture,
   state,
 }: SteeringReceiptFixture): void {
+  registerProcessingFeedbackCases({ createMinimalRun, state });
   it.each(["new", "old"] as const)(
     "keeps a rejected steer skipped when drop:%s discards it",
     async (dropPolicy) => {

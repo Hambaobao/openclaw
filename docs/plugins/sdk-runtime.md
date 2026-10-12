@@ -476,3 +476,18 @@ for provider selection, lifecycle, failure handling, limits, and diagnostics.
 <a id="api-runtime-tasks" />
 
 The former Tasks runtime is no longer available. See [removed Tasks and TaskFlow APIs](/plugins/sdk-migration/removed-surfaces#tasks-and-taskflow-apis-removed) for native-owner alternatives.
+
+## Confirmed source processing feedback
+
+A channel can attach `turnAdoptionLifecycle.onRunIncluded({ runId, completion })`
+to reply options. The host invokes it after the backend confirms turn acceptance
+or starts the model call, or after steering is confirmed and its transcript
+commit succeeds. Queuing, durable input adoption, and spawning a process do not
+confirm inclusion. Backends without an acceptance signal keep waiting feedback.
+
+The opaque `runId` identifies the exact reply owner, independently of backend
+attempt IDs. `completion` settles after that owner's terminal reply delivery
+and persistence barrier. The callback is synchronous and best effort: enqueue
+channel feedback work without awaiting provider I/O or changing run ownership.
+`onAdopted` still owns durable input custody; `onSettled` still ends queue
+ownership. Neither replaces confirmed processing feedback.

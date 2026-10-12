@@ -86,6 +86,7 @@ import {
   markReplyOperationExecutionStarted,
   retainReplyOperationUntilComplete,
 } from "./reply-run-registry.js";
+import { notifyReplyRunInputIncluded } from "./reply-run-typing.js";
 import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
 
 async function executeAgentTurnInternalLoop(
@@ -270,6 +271,12 @@ async function executeAgentTurnInternalLoop(
       return;
     }
     notifyAgentRunStart();
+    if (
+      params.replyOperation &&
+      (info.phase === "turn_accepted" || info.phase === "model_call_started")
+    ) {
+      notifyReplyRunInputIncluded(params.replyOperation, params.followupRun.turnAdoptionLifecycle);
+    }
     void (
       params.typingSignals.signalExecutionActivity?.() ?? params.typingSignals.signalRunStart()
     ).catch((err: unknown) => {
