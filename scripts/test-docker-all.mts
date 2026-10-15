@@ -1076,7 +1076,7 @@ export function runShellCommand({
         resolve({
           signal,
           status: exitCode,
-          timedOut,
+          timedOut: timedOut || exitCode === 124,
           noOutputTimedOut,
           ...(cancelled ? { cancelled: true as const } : {}),
         });
@@ -1193,7 +1193,7 @@ export function runShellCaptureCommand({
           stderrTruncated,
           stdout,
           stdoutTruncated,
-          timedOut,
+          timedOut: timedOut || exitCode === 124,
           ...(cancelled ? { cancelled: true as const } : {}),
         });
       };

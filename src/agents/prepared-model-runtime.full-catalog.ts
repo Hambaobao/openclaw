@@ -1,5 +1,5 @@
-import { isDeepStrictEqual } from "node:util";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { asPositiveFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import type { Model } from "../llm/types.js";
 import { resolvePreparedProviderStaticConfigs } from "../plugins/provider-discovery.js";
 import { prepareModelCatalogThinkingPolicies } from "../plugins/provider-thinking.js";
@@ -7,7 +7,6 @@ import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-
 import { dedupeByKey } from "../shared/dedupe-by-key.js";
 import { discoverModels } from "./agent-model-discovery.js";
 import { getPreparedRuntimeAuthMaterializations } from "./auth-profiles/runtime-materializations.js";
-import { runtimeAuthMetadataState } from "./auth-profiles/runtime-snapshot-owner.js";
 import { loadBundledProviderStaticCatalogContextModels } from "./embedded-agent-runner/model.static-catalog.js";
 import { createPreparedConfiguredRuntimeModelLookup } from "./embedded-agent-runner/model.static-id.js";
 import {
@@ -15,8 +14,10 @@ import {
   modelCatalogRouteVariantKey,
   modelCatalogRowToEntry,
 } from "./model-catalog-entry.js";
+import { overlayCatalogMetadata } from "./model-catalog-metadata.js";
 import { compareModelCatalogEntries } from "./model-catalog-order.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
+import { modelTransportRoutesMatch } from "./model-compat-catalog.js";
 import { createModelCatalogIdentityKeyResolver } from "./openai-model-routes.js";
 import {
   copyPreparedModelFullCatalogAuth,
@@ -55,55 +56,6 @@ import type {
 import { AuthStorage } from "./sessions/auth-storage.js";
 
 const fullModelCatalogSnapshots = new WeakSet<ModelCatalogSnapshot>();
-
-function catalogPublicationContent(catalog: ModelCatalogSnapshot) {
-  const { pendingProviders: _pending, refreshFailed: _failed, ...inventory } = catalog;
-  // Scoped merges move providers, not their model preference order. Compare a grouped view
-  // without changing the published order used by model-selection fallbacks.
-  const byProvider = <T extends { provider: string }>(rows: readonly T[] = []) =>
-    rows.toSorted((left, right) => left.provider.localeCompare(right.provider));
-  const byRuntime = <T extends { provider: string }>(
-    scopes: Readonly<Record<string, readonly T[]>> | undefined,
-  ) =>
-    scopes &&
-    Object.fromEntries(
-      Object.entries(scopes).map(([runtime, rows]) => [runtime, byProvider(rows)]),
-    );
-  const auth = getPreparedModelFullCatalogAuth(catalog);
-  return {
-    ...inventory,
-    entries: byProvider(catalog.entries),
-    routeVariants: byProvider(catalog.routeVariants),
-    staticEntries: byProvider(catalog.staticEntries),
-    providerOutcomes: byProvider(catalog.providerOutcomes),
-    nativeProviderOutcomes: byRuntime(catalog.nativeProviderOutcomes),
-    nativeHostRows: byRuntime(catalog.nativeHostRows),
-    authoritative: catalog.authoritative !== false,
-    full: isPreparedModelCatalogFull(catalog),
-    // Workers can observe auth changes before the parent gets a store publication.
-    auth: auth && {
-      modes: auth.authModes,
-      labels: auth.providerAuthLabels,
-      metadata: runtimeAuthMetadataState(auth.authStore),
-    },
-  };
-}
-
-/** Keep inventory identity stable across renewals while adopting the latest private auth. */
-export function retainPreparedModelCatalogPublication(
-  catalog: ModelCatalogSnapshot | undefined,
-  previous: ModelCatalogSnapshot | undefined,
-): ModelCatalogSnapshot | undefined {
-  if (
-    !catalog ||
-    !previous ||
-    !isDeepStrictEqual(catalogPublicationContent(catalog), catalogPublicationContent(previous))
-  ) {
-    return catalog;
-  }
-  copyPreparedModelFullCatalogAuth(catalog, previous);
-  return previous;
-}
 
 /** Builds complete inventory before generation-specific runtime capability projection. */
 export async function prepareFullCatalogFacts(
@@ -514,10 +466,33 @@ export function materializePreparedModelCatalog(
   snapshot: ModelCatalogSnapshot,
   runtimeCapabilityModels: readonly PreparedRuntimeCapabilityModel[],
   configuredStaticEntries: ModelCatalogSnapshot["staticEntries"] = [],
+  acceptedDiscoveryProviders: ReadonlySet<string> = new Set(),
 ): ModelCatalogSnapshot {
   // Preserve inventory reads before capability preparation when the snapshot has accessors.
   const materialized = { ...snapshot };
   const sourceEntries = snapshot.entries;
+  const sourceRoutes = [...sourceEntries, ...snapshot.routeVariants];
+  // The inventory owner has already validated source, account and generation. Only a
+  // provider-marked unknown-model estimate may yield to that accepted inventory;
+  // curated static metadata and authored caps keep their existing minimum semantics.
+  const supersedingEntry = (entry: ModelCatalogSnapshot["entries"][number]) =>
+    acceptedDiscoveryProviders.has(normalizeProviderId(entry.provider)) &&
+    entry.contextWindowSource === "synthetic"
+      ? sourceRoutes.find(
+          (accepted) =>
+            !accepted.nativeRuntime &&
+            accepted.provider === entry.provider &&
+            accepted.id === entry.id &&
+            Boolean(accepted.api) &&
+            accepted.api === entry.api &&
+            modelTransportRoutesMatch(accepted, entry) &&
+            // Only a reported limit grants replacement: a real prompt limit, or a native
+            // window that is not itself a provider estimate.
+            (accepted.contextTokens ??
+              (accepted.contextWindowSource === "synthetic" ? undefined : accepted.contextWindow) ??
+              0) > 0,
+        )
+      : undefined;
   const identityKey = createModelCatalogIdentityKeyResolver();
   // Re-enrich exact harness observations from this API generation, not a pre-await projection.
   const hostRows = enrichHarnessRows(Object.values(snapshot.nativeHostRows ?? {}).flat(), snapshot);
@@ -541,10 +516,14 @@ export function materializePreparedModelCatalog(
         runtime.params || entry.params ? { ...runtime.params, ...entry.params } : undefined;
       const compat =
         runtime.compat || entry.compat ? { ...runtime.compat, ...entry.compat } : undefined;
+      // A superseded provider estimate cannot replace accepted thinking metadata.
       return {
         ...entry,
         thinkingPolicyProvider,
-        ...(runtime.reasoning !== undefined ? { reasoning: runtime.reasoning } : {}),
+        ...(runtime.reasoning !== undefined &&
+        (entry.reasoning === undefined || !supersedingEntry(runtime))
+          ? { reasoning: runtime.reasoning }
+          : {}),
         ...(params ? { params } : {}),
         ...(compat ? { compat } : {}),
       };
@@ -566,7 +545,33 @@ export function materializePreparedModelCatalog(
   );
   if (snapshot.staticEntries || configuredStaticEntries.length > 0) {
     materialized.staticEntries = project(
-      dedupeByKey([...configuredStaticEntries, ...(snapshot.staticEntries ?? [])], identityKey),
+      dedupeByKey(
+        [...configuredStaticEntries, ...(snapshot.staticEntries ?? [])].flatMap((entry) => {
+          const accepted = supersedingEntry(entry);
+          if (!accepted) {
+            return [entry];
+          }
+          const promptCap = asPositiveFiniteNumber(entry.contextTokens);
+          const {
+            contextWindow: _syntheticWindow,
+            contextWindowSource: _syntheticSource,
+            contextTokens: _configuredPrompt,
+            reasoning: fallbackReasoning,
+            ...configuredMetadata
+          } = entry;
+          const reportedPrompt = asPositiveFiniteNumber(accepted.contextTokens);
+          return [
+            overlayCatalogMetadata(accepted, {
+              ...configuredMetadata,
+              ...(entry.configuredReasoning !== undefined ? { reasoning: fallbackReasoning } : {}),
+              ...(promptCap !== undefined
+                ? { contextTokens: Math.min(promptCap, reportedPrompt ?? promptCap) }
+                : {}),
+            }),
+          ];
+        }),
+        identityKey,
+      ),
     );
   }
   if (isPreparedModelCatalogFull(snapshot)) {

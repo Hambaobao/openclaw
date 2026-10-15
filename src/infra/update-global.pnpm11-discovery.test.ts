@@ -7,6 +7,7 @@ import {
   detectGlobalInstallManagerForRoot,
   listActivePnpmIsolatedGlobalPackages,
   resolveGlobalInstallTarget,
+  resolvePnpmGlobalInstallOwner,
 } from "./update-global.js";
 import { resolvePnpmGlobalDirFromGlobalRoot } from "./update-native-package-owner.js";
 
@@ -23,9 +24,19 @@ async function writePnpmIsolatedPackage(params: {
   installName: string;
   version: string;
   dependencies?: Record<string, string>;
+  nestedStore?: boolean;
 }): Promise<string> {
   const installDir = path.join(params.globalRoot, params.installName);
-  const packageRoot = path.join(installDir, "node_modules", "openclaw");
+  const packageRoot = params.nestedStore
+    ? path.join(
+        installDir,
+        "node_modules",
+        ".pnpm",
+        `openclaw@${params.version}`,
+        "node_modules",
+        "openclaw",
+      )
+    : path.join(installDir, "node_modules", "openclaw");
   await fs.mkdir(packageRoot, { recursive: true });
   await Promise.all([
     writeGlobalPackageJson(packageRoot, params.version),
@@ -38,12 +49,19 @@ async function writePnpmIsolatedPackage(params: {
       "utf8",
     ),
   ]);
+  if (params.nestedStore) {
+    await fs.symlink(packageRoot, path.join(installDir, "node_modules", "openclaw"), "dir");
+  }
   await fs.symlink(installDir, path.join(params.globalRoot, `hash-${params.installName}`), "dir");
   return packageRoot;
 }
 
 describe("pnpm isolated global install discovery", () => {
-  it.each([11, 12])("detects pnpm %s isolated installs", async (layoutVersion) => {
+  it.each([
+    [11, false],
+    [12, false],
+    [11, true],
+  ])("detects pnpm %s isolated installs (nested store: %s)", async (layoutVersion, nestedStore) => {
     await withTestDir({ prefix: "openclaw-update-pnpm-isolated-root-" }, async (base) => {
       const npmRoot = path.join(base, "npm", "lib", "node_modules");
       const pnpmGlobalDir = path.join(base, "pnpm-home", "global");
@@ -52,6 +70,7 @@ describe("pnpm isolated global install discovery", () => {
         globalRoot: pnpmGlobalRoot,
         installName: "a1b2",
         version: "2026.7.1",
+        nestedStore,
       });
       const hashLinkedPkgRoot = path.join(pnpmGlobalRoot, "hash-a1b2", "node_modules", "openclaw");
       const pnpmHomeAlias = path.join(base, "pnpm-home-alias");
@@ -96,7 +115,7 @@ describe("pnpm isolated global install discovery", () => {
         command: "pnpm",
         pnpmIsolated: { layoutVersion },
         globalRoot: pnpmGlobalRoot,
-        packageRoot: pkgRoot,
+        packageRoot: hashLinkedPkgRoot,
       };
       await expect(
         resolveGlobalInstallTarget({
@@ -108,6 +127,10 @@ describe("pnpm isolated global install discovery", () => {
         }),
       ).resolves.toEqual(expectedTarget);
       expect(runCommand).not.toHaveBeenCalled();
+      await expect(resolvePnpmGlobalInstallOwner(pkgRoot)).resolves.toEqual({
+        ownerRoot: path.join(pnpmGlobalRoot, "a1b2"),
+        packageRoot: hashLinkedPkgRoot,
+      });
       await expect(
         resolveGlobalInstallTarget({ manager: "pnpm", runCommand, timeoutMs: 1000 }),
       ).resolves.toEqual(expectedTarget);
@@ -119,7 +142,7 @@ describe("pnpm isolated global install discovery", () => {
   it("prefers the invoking project when multiple installs are active", async () => {
     await withTestDir({ prefix: "openclaw-update-pnpm-isolated-owner-" }, async (base) => {
       const pnpmGlobalRoot = path.join(base, "pnpm-home", "global", "v11");
-      const otherPackageRoot = await writePnpmIsolatedPackage({
+      await writePnpmIsolatedPackage({
         globalRoot: pnpmGlobalRoot,
         installName: "a-other",
         version: "2026.7.1",
@@ -143,8 +166,14 @@ describe("pnpm isolated global install discovery", () => {
           packageName: "openclaw",
         }),
       ).resolves.toEqual([
-        { packageRoot: otherPackageRoot, packageNames: ["openclaw"] },
-        { packageRoot: invokingPackageRoot, packageNames: ["cowsay", "openclaw"] },
+        {
+          packageRoot: path.join(pnpmGlobalRoot, "hash-a-other", "node_modules", "openclaw"),
+          packageNames: ["openclaw"],
+        },
+        {
+          packageRoot: path.join(pnpmGlobalRoot, "hash-z-invoking", "node_modules", "openclaw"),
+          packageNames: ["cowsay", "openclaw"],
+        },
       ]);
       await expect(
         resolveGlobalInstallTarget({
@@ -159,7 +188,7 @@ describe("pnpm isolated global install discovery", () => {
         command: "pnpm",
         pnpmIsolated: { layoutVersion: 11 },
         globalRoot: pnpmGlobalRoot,
-        packageRoot: invokingPackageRoot,
+        packageRoot: path.join(pnpmGlobalRoot, "hash-z-invoking", "node_modules", "openclaw"),
       });
     });
   });

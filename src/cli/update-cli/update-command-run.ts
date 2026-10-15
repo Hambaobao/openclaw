@@ -14,7 +14,6 @@ import {
   isGatewayExternallySupervised,
 } from "../../infra/gateway-supervision.js";
 import { resolveOpenClawPackageRootSync } from "../../infra/openclaw-root.js";
-import { assertNoPendingPackageActivation } from "../../infra/package-update-activation.js";
 import { normalizeUpdateChannel } from "../../infra/update-channels.js";
 import { resolveUpdateInstallKind } from "../../infra/update-check.js";
 import {
@@ -27,7 +26,6 @@ import {
   createFreeBsdPkgOwnershipInspection,
   type FreeBsdPkgOwnershipInspection,
 } from "../../infra/update-freebsd-pkg-ownership.js";
-import { resolveUpdateInstallRoot } from "../../infra/update-install-root.js";
 import { cleanupStaleManagedServiceUpdateHandoffs } from "../../infra/update-managed-service-handoff-cleanup.js";
 import {
   POST_CORE_UPDATE_CHANNEL_ENV,
@@ -90,7 +88,10 @@ import {
   retireMutableUpdateSignalRun,
   withMutableUpdateSignals,
 } from "./update-command-mutable-signals.js";
-import { UpdateCommandPendingRecoveryFailure } from "./update-command-result.js";
+import {
+  assertUpdatePackageActivationAdmission,
+  settleStalePackageActivationAdmission,
+} from "./update-command-package-activation.js";
 import {
   resolveOwnedManagedUpdateEnv,
   withOwnedManagedUpdateEnv,
@@ -200,35 +201,6 @@ export async function resolveUpdateCommandAdmissionEnv(params: {
   return env;
 }
 
-/** Package admission must not open history or launch diagnostics on a retained operation. */
-export function assertUpdatePackageActivationAdmission(
-  root: string,
-  options?: Parameters<typeof assertNoPendingPackageActivation>[1] & { serviceRoot?: string },
-): void {
-  try {
-    assertNoPendingPackageActivation(resolveUpdateInstallRoot(root), options);
-  } catch (cause) {
-    throw new UpdateCommandPendingRecoveryFailure(
-      {
-        status: "error",
-        mode: "unknown",
-        root,
-        reason: "update-recovery-pending",
-        steps: [],
-        durationMs: 0,
-      },
-      formatErrorMessage(cause),
-      { cause },
-    );
-  }
-  // A retained publication still owns the service installation when the CLI updates another root.
-  if (options?.serviceRoot && options.serviceRoot !== root) {
-    assertUpdatePackageActivationAdmission(options.serviceRoot, {
-      continuation: options.continuation,
-    });
-  }
-}
-
 export async function admitUpdateCommandRun(params: {
   opts: UpdateCommandOptions;
   root: string;
@@ -240,13 +212,14 @@ export async function admitUpdateCommandRun(params: {
   initialization?: UpdateInitializationAdmission;
   assertCurrent?: () => void;
 }): Promise<NonNullable<UpdateCommandOptions["run"]>> {
-  assertUpdatePackageActivationAdmission(params.root, { serviceRoot: params.serviceRoot });
+  const packageAdmission = { serviceRoot: params.serviceRoot, dryRun: params.opts.dryRun };
+  assertUpdatePackageActivationAdmission(params.root, packageAdmission);
   const env = await resolveUpdateCommandAdmissionEnv(params);
   // A previous invocation may have died with a sealed restoration plan. Detect
   // it before any writable owner open or history row creation changes that state.
   // An inherited diagnostic run ID is not a durable continuation claim.
   await assertUpdateRecoveryAdmission({ env });
-  assertUpdatePackageActivationAdmission(params.root, { serviceRoot: params.serviceRoot });
+  assertUpdatePackageActivationAdmission(params.root, packageAdmission);
   await assertOpenClawStateWriteAllowedAtPath({
     databasePath: resolveOpenClawStateSqlitePath(env),
     env,
@@ -295,7 +268,7 @@ export async function admitUpdateCommandRun(params: {
       params.opts.run?.completionOwner === "gateway-restart" ||
       undefined,
   });
-  assertUpdatePackageActivationAdmission(params.root, { serviceRoot: params.serviceRoot });
+  assertUpdatePackageActivationAdmission(params.root, packageAdmission);
   const driver = readUpdateRunDriver();
   const ledgerOptions = {
     env,
@@ -418,7 +391,7 @@ export async function withUpdatePreviewSignals<T>(
 export function createUpdateRunProgress(
   run: NonNullable<UpdateCommandOptions["run"]>,
   progress: UpdateDisplayProgress,
-  recordStep: (step: UpdateRunStep) => Promise<UpdateRunRecord>,
+  recordStep: (step: UpdateRunStep) => Promise<UpdateRunRecord | undefined>,
 ): UpdateStepProgress & {
   deferLedgerWrites: () => void;
   flushLedgerWrites: () => Promise<void>;
@@ -662,9 +635,22 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
   await pkgOwnership.assertUnowned(discoveredRoot);
   // A post-core marker cannot bypass pending recovery without the live original
   // owner. Check both roots before config/autostart preparation or history.
-  assertUpdatePackageActivationAdmission(discoveredRoot, {
-    continuation: postCoreUpdateResume ? opts.run?.executorFence : undefined,
-  });
+  const packageActivationNotes: string[] = [];
+  const admitPackageActivation = async (root: string) => {
+    const note = postCoreUpdateResume
+      ? undefined
+      : await settleStalePackageActivationAdmission(root, opts.dryRun);
+    if (note && opts.dryRun) {
+      packageActivationNotes.push(note);
+    } else if (note) {
+      defaultRuntime.error(note);
+    }
+    assertUpdatePackageActivationAdmission(root, {
+      continuation: postCoreUpdateResume ? opts.run?.executorFence : undefined,
+      dryRun: !postCoreUpdateResume && opts.dryRun,
+    });
+  };
+  await admitPackageActivation(discoveredRoot);
   const servicePlan =
     installKind === "package" && !postCoreUpdateResume && !foreground
       ? await resolveManagedServicePackageUpdatePlan({
@@ -676,8 +662,11 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
   const packageAdmission = {
     continuation: postCoreUpdateResume ? opts.run?.executorFence : undefined,
     serviceRoot: servicePlan?.serviceRoot ?? servicePlan?.rootRedirect?.root,
+    dryRun: !postCoreUpdateResume && opts.dryRun,
   };
-  assertUpdatePackageActivationAdmission(discoveredRoot, packageAdmission);
+  if (packageAdmission.serviceRoot && packageAdmission.serviceRoot !== discoveredRoot) {
+    await admitPackageActivation(packageAdmission.serviceRoot);
+  }
   opts.run?.executorFence?.assertCurrent();
   if (opts.dryRun !== true) {
     await assertOpenClawStateWriteAllowedAtPath({
@@ -720,6 +709,7 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
     installKind,
     servicePlan,
     pkgOwnership,
+    ...(packageActivationNotes.length ? { packageActivationNotes } : {}),
   };
 }
 

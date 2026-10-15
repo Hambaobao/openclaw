@@ -714,3 +714,5 @@ export function capturePluginGenerationArtifact(
     throw error;
   }
 }
+
+export type PluginGenerationArtifact = ReturnType<typeof capturePluginGenerationArtifact>;

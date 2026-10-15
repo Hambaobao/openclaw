@@ -40,6 +40,7 @@ import {
 import { loadInstalledPluginIndex } from "../plugins/installed-plugin-index.js";
 import { createInstalledPluginOwnershipResolver } from "../plugins/installed-plugin-package-ownership.js";
 import { configReferencesNpmInstallPath } from "../plugins/installs.js";
+import { VERSION_BOUND_RUNTIME_PLUGIN_IDS } from "../plugins/official-runtime-plugins.js";
 import { createPluginCache, withPluginCache } from "../plugins/plugin-cache.js";
 import {
   withPluginLifecycleLease,
@@ -50,6 +51,7 @@ import {
   pluginPackageUpdateMayMutateConfig,
   reconcilePluginPackageUpdateConfig,
 } from "../plugins/plugin-package-update.js";
+import { resolveOfficialPluginCohortNpmSpecs } from "../plugins/plugin-version-drift.js";
 import { refreshPluginRegistryAfterConfigMutation } from "../plugins/registry-refresh.js";
 import {
   isPluginInstallRecordUpdateSource,
@@ -168,9 +170,11 @@ export async function runPluginUpdateCommand(params: RunPluginUpdateCommandParam
     await gateway("plugins.list", {});
   }
   let changed = false;
+  let activationDeferred = false;
   const update = withPluginLifecycleLease({}, (lease) =>
-    runPluginUpdateCommandUnlocked(params, lease, () => {
+    runPluginUpdateCommandUnlocked(params, lease, (deferred) => {
       changed = true;
+      activationDeferred ||= deferred;
     }),
   );
   let updateFailure: { error: unknown } | undefined;
@@ -179,7 +183,7 @@ export async function runPluginUpdateCommand(params: RunPluginUpdateCommandParam
   });
   // The runtime owner takes the same lease. Old callbacks retain their captured
   // package graph while this explicit application waits for ownership.
-  if (changed) {
+  if (changed && !activationDeferred) {
     if (gateway) {
       try {
         const result = await gateway<PluginsRefreshResult>("plugins.refresh", {});
@@ -219,7 +223,7 @@ export async function runPluginUpdateCommand(params: RunPluginUpdateCommandParam
 async function runPluginUpdateCommandUnlocked(
   params: RunPluginUpdateCommandParams,
   lease?: PluginLifecycleLeaseContext,
-  onMetadataChanged?: () => void,
+  onMetadataChanged?: (activationDeferred: boolean) => void,
 ): Promise<0 | 1> {
   const assertOwned = lease?.assertOwned.bind(lease);
   if (!params.opts.dryRun) {
@@ -464,6 +468,12 @@ async function runPluginUpdateCommandUnlocked(
                 officialPluginUpdateChannel,
                 syncOfficialPluginInstalls: params.opts.all ? true : undefined,
                 coreVersion: VERSION,
+                versionBoundPluginIds: VERSION_BOUND_RUNTIME_PLUGIN_IDS,
+                npmInstallSpecOverrides: resolveOfficialPluginCohortNpmSpecs({
+                  gatewayVersion: VERSION,
+                  installRecords: pluginInstallRecords,
+                  config: cfgWithPluginInstallRecords,
+                }),
                 ...installPolicyWarningAcknowledgement,
                 ...resolvePluginCapabilityConsentCliOptions({
                   acceptCapabilities: params.opts.acceptCapabilities,
@@ -632,7 +642,10 @@ async function runPluginUpdateCommandUnlocked(
       };
       await (migration ? migration.publish(nextConfig, commit) : commit());
       packageUpdatePersisted = true;
-      onMetadataChanged?.();
+      onMetadataChanged?.(Boolean(migration?.activationWarning));
+      if (migration?.activationWarning) {
+        logger.warn(migration.activationWarning);
+      }
       await settlePluginInstallTransactions(deferredInstallTransactions, "commit").catch(() =>
         logger.warn("Plugin update committed, but cleanup failed. Run openclaw plugins doctor."),
       );

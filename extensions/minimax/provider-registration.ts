@@ -21,7 +21,6 @@ import {
   buildProviderReplayFamilyHooks,
   normalizeModelCompat,
 } from "openclaw/plugin-sdk/provider-model-shared";
-import { buildProviderStreamFamilyHooks } from "openclaw/plugin-sdk/provider-stream-family";
 import { fetchMinimaxUsage } from "openclaw/plugin-sdk/provider-usage";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
@@ -47,6 +46,7 @@ import {
   createMinimaxProvider,
   minimaxAuthMethodMetadata,
 } from "./provider-contract-api.js";
+import { wrapMinimaxProviderStream } from "./stream.js";
 import { resolveMinimaxThinkingProfile } from "./thinking.js";
 
 const API_PROVIDER_ID = "minimax";
@@ -62,7 +62,8 @@ const MINIMAX_PROVIDER_HOOKS = {
     family: "hybrid-anthropic-openai",
     anthropicModelDropThinkingBlocks: true,
   }),
-  ...buildProviderStreamFamilyHooks("minimax-fast-mode"),
+  wrapStreamFn: wrapMinimaxProviderStream,
+  wrapSimpleCompletionStreamFn: wrapMinimaxProviderStream,
   resolveReasoningOutputMode: () => "native" as const,
   resolveThinkingProfile: ({ modelId }: { modelId: string }) =>
     resolveMinimaxThinkingProfile(modelId),
@@ -215,7 +216,7 @@ function createOAuthHandler(region: MiniMaxRegion) {
         access: result.access,
         refresh: result.refresh,
         expires: result.expires,
-        credentialExtra: { authFlow: "device-code" },
+        credentialExtra: { authFlow: "device-code", tokenEndpoint: result.tokenEndpoint },
         configPatch: {
           models: {
             providers: {
@@ -320,7 +321,7 @@ function buildMinimaxApiProviderPlugin(): ProviderPlugin {
   };
 }
 
-function buildMinimaxPortalProviderPlugin(): ProviderPlugin {
+function buildMinimaxPortalProviderPlugin(readBaseUrl: () => string | undefined): ProviderPlugin {
   return {
     ...createMinimaxPortalProvider(),
     catalog: {
@@ -332,6 +333,13 @@ function buildMinimaxPortalProviderPlugin(): ProviderPlugin {
       }),
     },
     auth: [createMinimaxOAuthMethod("global"), createMinimaxOAuthMethod("cn")],
+    refreshOAuth: async (credential, config) => {
+      const { refreshMiniMaxPortalOAuthCredential } = await import("./oauth.runtime.js");
+      return await refreshMiniMaxPortalOAuthCredential(
+        credential,
+        config === undefined ? readBaseUrl() : getProviderBaseUrl(config, PORTAL_PROVIDER_ID),
+      );
+    },
     ...MINIMAX_PROVIDER_HOOKS,
     resolveDynamicModel: (ctx) =>
       resolveMinimaxDynamicModel({ providerId: PORTAL_PROVIDER_ID, ctx }),
@@ -341,5 +349,11 @@ function buildMinimaxPortalProviderPlugin(): ProviderPlugin {
 
 export function registerMinimaxProviders(api: OpenClawPluginApi) {
   api.registerProvider(buildMinimaxApiProviderPlugin());
-  api.registerProvider(buildMinimaxPortalProviderPlugin());
+  api.registerProvider(
+    buildMinimaxPortalProviderPlugin(() =>
+      normalizeOptionalString(
+        api.runtime.config.current().models?.providers?.[PORTAL_PROVIDER_ID]?.baseUrl,
+      ),
+    ),
+  );
 }

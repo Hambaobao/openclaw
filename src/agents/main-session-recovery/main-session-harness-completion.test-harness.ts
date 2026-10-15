@@ -323,6 +323,96 @@ export function registerHarnessCompletionRecoveryCases(
     expect(callGateway).toHaveBeenCalledOnce();
   });
 
+  it.each(["control-ui", "channel"] as const)(
+    "resumes a human %s turn after inter-session steering was committed",
+    async (sourceIngress) => {
+      const {
+        makeSessionsDir,
+        mainSessionEntry,
+        writeStore,
+        writeTranscript,
+        expectRecovery,
+        loadSessionEntry,
+        gatewayParams,
+      } = getFixture();
+      const sessionsDir = await makeSessionsDir();
+      const storePath = path.join(sessionsDir, "sessions.json");
+      const sessionKey = "agent:main:main";
+      const sourceRunId = "human-run-with-steering";
+      const entry = mainSessionEntry({
+        restartRecoveryDeliveryRunId: sourceRunId,
+        restartRecoveryDeliverySourceRunId: sourceRunId,
+        restartRecoverySourceIngress: sourceIngress,
+        restartRecoveryRuns: [{ runId: sourceRunId, lifecycleGeneration: "before-restart" }],
+      });
+      await writeStore(sessionsDir, { [sessionKey]: entry });
+      await writeTranscript(sessionsDir, entry.sessionId, [
+        {
+          role: "user",
+          content: "Finish the requested repair",
+          provenance: { kind: "external_user" },
+        },
+        {
+          role: "user",
+          content: "The independent review found one more regression",
+          provenance: { kind: "inter_session", sourceTool: "sessions_send" },
+        },
+        {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [{ type: "toolCall", id: "inspect-regression", name: "read" }],
+        },
+      ]);
+
+      await expectRecovery({ started: 1, settled: 0, failed: 0, skipped: 0 });
+      expect(gatewayParams()).toMatchObject({
+        sessionKey,
+        expectedExistingSessionId: entry.sessionId,
+        deliver: false,
+      });
+      const recovered = loadSessionEntry({ sessionKey, storePath });
+      expect(recovered).toMatchObject({
+        restartRecoveryDeliverySourceRunId: sourceRunId,
+        restartRecoverySourceIngress: sourceIngress,
+      });
+      expect(recovered?.mainRestartRecovery?.tombstone).toBeUndefined();
+    },
+  );
+
+  it("refuses unscoped control-ui recovery when steering is the transcript tail", async () => {
+    const {
+      makeSessionsDir,
+      mainSessionEntry,
+      writeStore,
+      writeTranscript,
+      expectRecovery,
+      loadSessionEntry,
+    } = getFixture();
+    const sessionsDir = await makeSessionsDir();
+    const storePath = path.join(sessionsDir, "sessions.json");
+    const sessionKey = "agent:main:main";
+    const entry = mainSessionEntry({ restartRecoverySourceIngress: "control-ui" });
+    await writeStore(sessionsDir, { [sessionKey]: entry });
+    await writeTranscript(sessionsDir, entry.sessionId, [
+      {
+        role: "user",
+        content: "Read the delegated status",
+        provenance: { kind: "inter_session", sourceTool: "sessions_send" },
+      },
+      {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "status-1", name: "session_status" }],
+      },
+    ]);
+    await expectRecovery({ started: 0, settled: 0, failed: 0, skipped: 1 });
+    expect(callGateway).not.toHaveBeenCalled();
+    expect(loadSessionEntry({ sessionKey, storePath })).toMatchObject({
+      abortedLastRun: false,
+      mainRestartRecovery: { tombstone: expect.any(Object) },
+    });
+  });
+
   it.each(["delegated", "unverified internal", "internal system"] as const)(
     "refuses %s recovery without surviving sender authority",
     async (source) => {

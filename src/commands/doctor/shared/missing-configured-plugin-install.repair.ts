@@ -35,6 +35,8 @@ import {
   hasRetainedManagedNpmInstallMarker,
   markRetainedManagedNpmInstall,
 } from "../../../plugins/managed-npm-retention.js";
+import { resolveTrustedSourceLinkedOfficialClawHubInstall } from "../../../plugins/official-external-install-records.js";
+import { VERSION_BOUND_RUNTIME_PLUGIN_IDS } from "../../../plugins/official-runtime-plugins.js";
 import { isPayloadMissing } from "../../../plugins/payload-verification.js";
 import {
   withPluginLifecycleLease,
@@ -46,7 +48,6 @@ import {
   type PluginUpdateOutcome,
 } from "../../../plugins/update.js";
 import { resolveUserPath } from "../../../utils.js";
-import { VERSION_BOUND_RUNTIME_PLUGIN_IDS } from "./configured-runtime-plugin-installs.js";
 import {
   collectDownloadableInstallCandidates,
   collectUpdateDeferredPluginIds,
@@ -446,8 +447,10 @@ async function repairMissingPluginInstallsWithLease(
                 (updateChannel === "stable" || updateChannel === "extended-stable") &&
                 params.pluginIds.has(pluginId) &&
                 VERSION_BOUND_RUNTIME_PLUGIN_IDS.has(pluginId) &&
-                record.source === "npm" &&
-                Boolean(cohortSpecs[pluginId]) &&
+                ((record.source === "npm" && Boolean(cohortSpecs[pluginId])) ||
+                  Boolean(
+                    resolveTrustedSourceLinkedOfficialClawHubInstall({ pluginId, record }),
+                  )) &&
                 !newerRecordedPluginIds.has(pluginId) &&
                 (installedPluginIdsWithStaleVersionBoundRuntimePackages.has(pluginId) ||
                   isPayloadMissing(env, record.installPath)),

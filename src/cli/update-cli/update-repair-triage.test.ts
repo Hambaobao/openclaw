@@ -16,7 +16,7 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
-import { assertUpdatePackageActivationAdmission } from "./update-command-run.js";
+import { assertUpdatePackageActivationAdmission } from "./update-command-package-activation.js";
 import { updateRepairCommand } from "./update-repair-command.js";
 
 const mocks = vi.hoisted(() => ({ root: vi.fn(), finalize: vi.fn() }));
