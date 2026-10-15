@@ -49,6 +49,7 @@ import {
 } from "./delivery-context.js";
 import {
   admitFollowupRunLifecycle,
+  createAggregateLifecycle,
   completeFollowupRunLifecycle,
   retireFollowupRunCancellation,
 } from "./lifecycle.js";
@@ -543,17 +544,6 @@ function createAggregateCancellation(items: readonly FollowupRun[]): AggregateCa
   };
 }
 
-function resolveQueuedCronCreatorAuthorityUnavailable(
-  items: readonly FollowupRun[],
-): "queued-local-operator" | undefined {
-  return items.some(
-    (item) =>
-      item.turnAdoptionLifecycle?.cronCreatorAuthorityUnavailable === "queued-local-operator",
-  )
-    ? "queued-local-operator"
-    : undefined;
-}
-
 type FollowupQueueSummaryState = Pick<
   FollowupQueueState,
   | "cap"
@@ -870,24 +860,20 @@ async function runSyntheticOverflowSummary(params: {
     replyOperationRunStates: runtimeMetadata.replyOperationRunStates,
     ...(params.onAdmitted
       ? {
-          turnAdoptionLifecycle: {
-            // Synthetic aggregate owner — not a durable exclusive ingress identity.
-            admission: "cancel-only" as const,
-            ...(resolveQueuedCronCreatorAuthorityUnavailable(params.sources)
-              ? { cronCreatorAuthorityUnavailable: "queued-local-operator" as const }
-              : {}),
-            onAdopted: async () => {
+          turnAdoptionLifecycle: createAggregateLifecycle(
+            params.sources,
+            async () => {
               await params.onAdmitted?.();
               admitted = true;
             },
-            onSettled: () => {
+            () => {
               if (admitted) {
                 for (const source of params.sources) {
                   completeFollowupRunLifecycle(source);
                 }
               }
             },
-          },
+          ),
         }
       : {}),
     ...resolveOriginRoutingMetadata([params.source]),
@@ -1156,19 +1142,15 @@ export function scheduleFollowupDrain(
                 ...collectRuntimeMetadata(activeGroupItems, cancellation.signal),
                 ...(needsGroupAdmission
                   ? {
-                      turnAdoptionLifecycle: {
-                        // Synthetic aggregate owner — sources keep their own admission.
-                        admission: "cancel-only" as const,
-                        ...(resolveQueuedCronCreatorAuthorityUnavailable(activeGroupItems)
-                          ? { cronCreatorAuthorityUnavailable: "queued-local-operator" as const }
-                          : {}),
-                        onAdopted: admitGroupSources,
-                        onSettled: () => {
+                      turnAdoptionLifecycle: createAggregateLifecycle(
+                        activeGroupItems,
+                        admitGroupSources,
+                        () => {
                           if (admitted) {
                             completeGroup();
                           }
                         },
-                      },
+                      ),
                     }
                   : {}),
                 ...collectQueuedPromptMedia(activeGroupItems),
