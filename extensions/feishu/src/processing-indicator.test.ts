@@ -492,6 +492,54 @@ describe("Feishu automatic source processing reactions", () => {
     }
   });
 
+  it("transitions a live Wait to Typing after long preparation without reopening restart replay", async () => {
+    const now = Date.UTC(2026, 9, 16);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const h = harness();
+      const message = h.receive("slow-preparation", "topic-a", now);
+      message.queued();
+      await h.owner.drain();
+      expect(h.active).toEqual(new Set(["slow-preparation:OneSecond"]));
+
+      clock.mockReturnValue(now + 135_906);
+      const completion = createDeferred<void>();
+      message.included({ runId: "prepared-run", completion: completion.promise });
+      await h.owner.drain();
+      expect(h.active).toEqual(new Set(["slow-preparation:Typing"]));
+      expect(h.calls).toEqual([
+        { operation: "add", messageId: "slow-preparation", emoji: "OneSecond" },
+        {
+          operation: "delete",
+          messageId: "slow-preparation",
+          reactionId: "slow-preparation:OneSecond",
+        },
+        { operation: "add", messageId: "slow-preparation", emoji: "Typing" },
+      ]);
+
+      completion.resolve();
+      await completion.promise;
+      await h.owner.drain();
+      const restarted = h.makeOwner();
+      const replay = restarted.receive({
+        messageId: "slow-preparation",
+        chatId: "chat-a",
+        topicId: "topic-a",
+        routeKey: "chat-a:topic-a",
+        messageCreateTimeMs: now,
+      });
+      replay.queued();
+      replay.included({ runId: "replayed-run", completion: Promise.resolve() });
+      await restarted.drain();
+      expect(h.add).toHaveBeenCalledTimes(2);
+      expect(h.remove).toHaveBeenCalledTimes(2);
+      expect(h.active.size).toBe(0);
+      expect(h.errors).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("suppresses new reactions after a source ages while receipt loading waits", async () => {
     const now = Date.UTC(2026, 9, 12);
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
