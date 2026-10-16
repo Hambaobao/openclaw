@@ -696,7 +696,11 @@ function requireExpectedBinding(params) {
     "workflow head branch",
   );
   const runStatePolicy = assertTrimmedString(expected.runStatePolicy, "workflow run-state policy");
-  if (runStatePolicy !== "completed-success" && runStatePolicy !== "same-run-producer-success") {
+  if (
+    runStatePolicy !== "completed-success" &&
+    runStatePolicy !== "same-run-producer-success" &&
+    runStatePolicy !== "completed-producer-success"
+  ) {
     throw new Error(`Unsupported workflow run-state policy: ${runStatePolicy}`);
   }
   const consumerRunAttempt =
@@ -704,7 +708,8 @@ function requireExpectedBinding(params) {
       ? assertPositiveInteger(expected.consumerRunAttempt, "consumer workflow run attempt")
       : undefined;
   const producerJobName =
-    runStatePolicy === "same-run-producer-success"
+    runStatePolicy === "same-run-producer-success" ||
+    runStatePolicy === "completed-producer-success"
       ? assertTrimmedString(expected.producerJobName, "producer job name")
       : undefined;
   const producerStepName =
@@ -792,7 +797,10 @@ export function validateActionsArtifactBinding(params) {
 
 export function validateActionsArtifactProducerJob(params) {
   const expected = requireExpectedBinding(params);
-  if (expected.runStatePolicy !== "same-run-producer-success") {
+  if (
+    expected.runStatePolicy !== "same-run-producer-success" &&
+    expected.runStatePolicy !== "completed-producer-success"
+  ) {
     return expected;
   }
   const response = params.workflowJobs;
@@ -1190,7 +1198,10 @@ export async function downloadActionsArtifactArchive(params) {
   );
   validateActionsArtifactBinding({ artifactMetadata, expected, workflowRun });
   let workflowJobs;
-  if (expected.runStatePolicy === "same-run-producer-success") {
+  if (
+    expected.runStatePolicy === "same-run-producer-success" ||
+    expected.runStatePolicy === "completed-producer-success"
+  ) {
     workflowJobs = await transfer.json(
       `actions/runs/${expected.runId}/attempts/${expected.runAttempt}/jobs?per_page=100`,
       "GitHub Actions producer jobs",

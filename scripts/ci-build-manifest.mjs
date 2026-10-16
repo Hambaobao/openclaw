@@ -1082,6 +1082,12 @@ const knownToolingConfigs = new Set([
   "test/vitest/vitest.tooling-isolated.config.ts",
   "test/vitest/vitest.tooling-docker.config.ts",
 ]);
+const compactReleaseMatrixRows =
+  eventName === "workflow_dispatch" &&
+  !mainValidation &&
+  !releaseGate &&
+  !ciQualification &&
+  nodeRunnerBackend === "github";
 // The same capped matrix owns compact and plugin work; admit its longest rows first.
 const nodeTestShards = targetNodeTestShards
   .toSorted(
@@ -1105,7 +1111,7 @@ const nodeTestShards = targetNodeTestShards
         : undefined);
     const packedGroups =
       groups?.length && nodeTestGroupsCodec ? encodeNodeTestGroups(groups) : undefined;
-    return {
+    const row = {
       check_name: shard.checkName,
       test_runtime_policy: testRuntimeMode,
       requires_bun:
@@ -1170,6 +1176,28 @@ const nodeTestShards = targetNodeTestShards
         return plan.configs?.includes("test/vitest/vitest.e2e.config.ts") ?? false;
       }),
     };
+    if (compactReleaseMatrixRows) {
+      // The workflow treats absent feature flags as false and history as [].
+      // Encoded groups own their names; the outer name is only a legacy fallback.
+      for (const key of [
+        "requires_bun",
+        "requires_dist",
+        "requires_go",
+        "requires_ripgrep",
+        "requires_sandbox_image",
+      ]) {
+        if (row[key] === false) {
+          delete row[key];
+        }
+      }
+      if (row.git_commits.length === 0) {
+        delete row.git_commits;
+      }
+      if (packedGroups && groups.every((group) => group.shard_name)) {
+        delete row.shard_name;
+      }
+    }
+    return row;
   });
 const nodeTestNonDistShards = nodeTestShards.filter((shard) => !shard.requires_dist);
 // Bound the final matrix: precise plans and appended plugin rows can bypass compact caps.

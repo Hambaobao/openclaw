@@ -17,6 +17,16 @@ If you installed via **npm/pnpm/bun** (global install, no git metadata),
 updates go through the package-manager flow described in
 [Updating](/install/updating).
 
+Update checks, candidate rehearsal, activation Doctor, and verification inherit
+the managed Gateway's Node heap controls from its effective service command and
+`NODE_OPTIONS`. Command-line heap controls take precedence. An empty service
+`NODE_OPTIONS` preserves heap controls supplied by the invoking shell while still
+clearing inherited preload and debugger flags. This requires the fix in the
+installed updater; an older updater cannot inherit it from the candidate it stages.
+
+Service-definition refresh recognizes Windows account aliases that resolve to the
+same SID. A different or unresolved account remains protected from automatic repair.
+
 Custom npm prefixes such as `~/.npm-global` are recognized from npm's configured
 prefix and the installed OpenClaw launcher. A prefix configured in `~/.npmrc`
 does not need a matching `NPM_CONFIG_PREFIX` environment variable. If no owner
@@ -126,6 +136,15 @@ status. JSON, non-interactive, `--yes`, and managed-service handoff invocations 
 not prompt after rollback.
 
 Update completion prints the terminal outcome and a local Markdown report path before exiting, including unexpected failures. Failed runs keep rollback-facing diagnostic JSON within the released 8 KiB limit. That file links a separate artifact containing every individually bounded Doctor finding; the Markdown report also retains the complete inventory. JSON output includes `reportPath`; a report-write failure prints a warning and preserves the update outcome.
+
+When another process holds the state database writer, the update driver gives
+its worker-backed phase and progress writes up to two minutes to acquire the
+writer. This extended wait ends when the transaction starts; Gateway and other
+callers retain the normal five-second budget.
+Progress-only receipts wait at most one second, then warn and continue
+without claiming a saved receipt. Required writes report actionable contention
+if their budget expires. This fix must be present in the installed updater to
+protect the next update it runs.
 
 Exit always waits for accepted state operations, pending database opens, and live
 worker references to settle. After settlement, retained-worker native close and
@@ -634,6 +653,12 @@ For a profile without a runtime database, an older npm target initializes its
 compatible state before the updater records history. The selected release's
 Doctor runs before activation, including when npm's install hooks already created
 the database. Existing databases retain their downgrade protections.
+
+During candidate validation, Doctor leaves bookkeeping-only version, wizard, and
+migration stamps out of the copied config so older updaters do not mistake them
+for required config repairs. Webhook completion without endpoint changes is
+recorded in the rehearsal state. Real config migrations still run; normal config
+writes after activation record the candidate's version and migration metadata.
 
 If database schema preflight cannot inspect the configured paths because the
 config is invalid, its refusal lists the config file and invalid fields. Run

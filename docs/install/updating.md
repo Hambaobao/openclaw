@@ -184,7 +184,8 @@ using the same installation owner, then retry the Control UI update.
 After package replacement, compatibility config reads from older updaters run
 in a fresh process using the updated package and its dependencies. This also
 applies to updates driven by 2026.9.4. If an optional read fails, the updater
-prints `candidate-config-read-failed` and leaves the service definition unchanged.
+prints `candidate-config-read-failed` with the reader's error or exit reason and
+leaves the service definition unchanged. The reader's stderr is not echoed.
 Reads follow the restored package after a rollback. Inspect the reported problem
 with the updated CLI after the update.
 Node and Bun readers run only one child per read. An attempted nested reader
@@ -247,8 +248,18 @@ selection described above apply only when the updater driving the update
 contains this fix. Installing a newer candidate cannot change that first hop.
 
 Pending package-publication recovery in either the CLI or selected service
-installation blocks writable preparation. Follow the package recovery command
-reported by the update before retrying; Doctor does not clear those artifacts.
+installation is checked before writable preparation. The updater settles eligible
+lost-lease recovery automatically; other unfinished operations still require the
+reported recovery command. Doctor does not clear those artifacts.
+
+Native pnpm updates also relocate pnpm 12 launcher paths before publishing them.
+After activation, unresolved launcher targets produce a warning with repair
+guidance without rolling back the updated package. These protections require
+the installed updater to contain the fix. If an older updater left `openclaw`
+pointing into a missing `.openclaw-update-native-*` directory, reinstall the
+same version with `pnpm add -g --force openclaw@<installed-version>` using the
+same account and global directories to recreate the launcher. Back up first
+and follow the [manual package-manager procedure](/install/updating/update-methods#alternative-manual-npm-pnpm-or-bun).
 
 If a pnpm-owned install fails with `IO error: not a terminal`, the installed
 updater may be triggering an interactive pnpm build-approval prompt while
@@ -336,6 +347,20 @@ cannot be updated, OpenClaw continues with the remaining plugins, keeps the prev
 installation where possible, and prints a short next action. A running updated
 Gateway can also report a plugin that did not load without turning the core update
 into a failure. Individual plugin outcomes remain available in `--json` output.
+When ClawHub has not published a version-matched official runtime plugin, the
+updater tries its declared trusted npm source for that same version, honoring
+catalog pins. Security and integrity refusals do not permit a source fallback.
+If neither source can serve the release, a
+compatible working installation stays in place with a version-skew warning and
+an `openclaw plugins update <id>` retry instruction.
+
+Unfinished plugin migrations retain their settings and state inputs while
+`plugins install`, `plugins update`, `doctor --fix`, and `update repair` repair
+the package. A verified replacement can be installed before its remaining data
+migration completes; pending migration still guards runtime activation. Explicit
+`config unset plugins.entries.<id>` can remove that entry, with the normal config
+backup preserved. Removing the entry does not settle its pending data migration.
+
 Failures to install core, repair required configuration or state, or start the
 updated Gateway remain update failures.
 Local copies selected through `plugins.load.paths` are operator-managed. Updates
@@ -401,6 +426,12 @@ verification run only after all file copies succeed. Canonical state and recover
 retain their existing durability guarantees. An older installed updater keeps
 its initial snapshot behavior until you launch an update from the newer version.
 
+Runtime retention looks for hoisted dependencies within the package manager's
+owning installation. Missing optional peers do not cause it to copy unrelated
+ancestor installations. Explicitly linked dependencies retain their own resolution.
+This improvement applies after the newer updater is installed; it cannot shorten
+the retention phase already running in an older updater.
+
 Database rehearsal also avoids a second full backup of each private snapshot.
 Update schema inspection and rehearsal use SQLite online backup with a pinned
 read transaction, so a busy Gateway can keep writing while the copy includes
@@ -455,6 +486,12 @@ package publication, and `retire` removes only its recorded obsolete objects.
 These commands do not replace post-update plugin, migration or service recovery.
 Keep other package managers stopped while recovering the operation.
 
+On FreeBSD, `repair` and `retire` read process identity through the recorded
+installation's own `koffi` dependency: the live package, or the copy the
+operation retains beside it during publication. Helpers written by older
+updaters cannot repair or retire on FreeBSD; `status` still reports the
+operation.
+
 Bun recovery requires a supported Bun runtime with WAL-reset-safe SQLite and can
 run without Node installed. The installed updater controls the first upgrade:
 older releases may omit the recovery command on Bun or refuse a Bun recovery
@@ -470,18 +507,29 @@ ownership; it is not authority to mutate an installation. Historical filesystem
 or executor-store identities do not have to match today's identities. Reboots,
 remounts, or removal of already-retained evidence do not reopen a closed operation.
 Reading a completed receipt does not rewrite it.
+A new update archives the completed receipt before preparing its own operation,
+preserving the journal and any leftover helpers or recovery directories as evidence.
 
 Explicit repair preserves settled evidence, including the entire control journal,
 inside the operation's retained recovery directory. The completed journal leaves
 the active admission path, so an older updater does not need to understand a newer
-settlement reason. Ordinary successful retirement still reuses the bounded last
-receipt described above.
+settlement reason. Ordinary successful retirement retains the last receipt until the next update
+archives it.
 Explicit repair verifies an installed candidate under current executor ownership,
 even when the old lease store disappeared or was replaced. It does not execute
 the old helper, so a changed or missing helper and changed retained directories
 are preserved as evidence rather than required as proof of the live package.
 An unfinished rollback cannot be settled merely because its lease or installation
 was replaced.
+
+`openclaw update` uses the same settlement before admission
+when the recorded lease database is missing or its identity has changed and the
+live installation is still the recorded previous or candidate package. Candidate
+content and launchers must pass verification. Settlement preserves recovery
+evidence, reports a warning, and does not restart the Gateway or install a package.
+`--dry-run` verifies and reports the planned settlement without changing the
+journal, lease database, or recovery evidence. Other pending operations still
+require `openclaw update repair` or the recorded package recovery command. The lease database stays at its existing location.
 
 After the transaction verifies its selected installation, cleanup failures are
 warnings. Changed old package trees, old helpers, and unexpected backup contents
@@ -500,6 +548,40 @@ These admission and cleanup fixes must be present in the updater executing them.
 A newer candidate cannot run before an already-blocked older updater downloads it.
 The candidate's dependency inventory can, however, avoid modifying old recovery
 artifacts during an update that has already passed admission.
+
+### Recover a completed receipt with an older updater
+
+An installed 2026.9.8 or 2026.9.9 updater can reject a completed `anchor-retired`
+receipt before downloading a fix when saved filesystem device numbers change.
+Use a separately installed OpenClaw version containing the completed-receipt
+recovery fix. Its standalone helper can archive completed history for the original
+installation while that installation's Gateway keeps running:
+
+```bash
+node /path/to/recovery-openclaw/dist/package-update-activation-recovery.mjs \
+  --anchor '/absolute/path/to/.openclaw.package-activation-<key>' \
+  --operation '<recorded-operation-id>' status
+node /path/to/recovery-openclaw/dist/package-update-activation-recovery.mjs \
+  --anchor '/absolute/path/to/.openclaw.package-activation-<key>' \
+  --operation '<recorded-operation-id>' retire
+```
+
+Use the anchor and operation ID from the original journal, with a supported
+external Node or Bun runtime. Keep other updaters and package managers stopped.
+`status` must report `complete`; it does not modify the receipt. `retire` acquires
+fresh update ownership, verifies that the inspected completed receipt is still
+current, and moves its control directory into the printed `.superseded-<id>`
+archive. It preserves the journal bytes and saved identities, installed package,
+launchers, and application state. It does not run Doctor or plugin migrations.
+After successful archival, retry `openclaw update` using the original installation.
+
+If archival fails and the active receipt remains, the command exits unsuccessfully
+and names the next step. Preserve both the receipt and any existing archive while
+resolving that error. An unfinished, foreign, or invalid operation still requires
+its original recovery owner; the independent helper cannot authorize publication
+or rollback for it. Do not rewrite identities or delete recovery artifacts.
+
+### Unfinished publication and rollback
 
 For an external-helper operation stuck at `prepared`, `publishing`, or
 `publication-complete` whose live package already serves the candidate, run
@@ -575,6 +657,13 @@ their existing behavior.
 Version-bound runtime plugins converge to the base release cohort when the
 core is a correction release (for example, `YYYY.M.P-2` uses plugin
 `YYYY.M.P`).
+`openclaw plugins update` uses the same host-matching targets. Known-incompatible
+official runtime versions, such as Codex releases before 2026.9.7, are reported
+as unavailable before they can register or serve turns. Compatible versions
+remain loadable even when they are older than the host. Run
+`openclaw update repair`, or `openclaw plugins update codex`, then restart the
+Gateway. Newer explicit pins and independently versioned plugins retain their
+existing compatibility behavior.
 Catalog installs created by current OpenClaw versions retain that default
 intent. Verified OpenClaw-owned packages recorded at an exact OpenClaw release
 no newer than core resume their catalog's default selector after a successful

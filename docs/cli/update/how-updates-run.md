@@ -32,6 +32,11 @@ replacement. Choose an empty `OPENCLAW_GIT_DIR` and retry.
 
 ### Validation and activation
 
+If a service refresh refuses before writing its definition, the candidate keeps
+the original refusal in its output. The updater can then revalidate and restart
+the preserved service definition. Actual loss of native service authority still
+leaves recovery pending until ownership and restoration can be verified.
+
 If the resolved registry package version equals the installed version without changing the selected channel or installation method, or the Git target SHA equals `HEAD` and the installed runtime passes artifact verification, plugin convergence still runs; if plugins and runtime artifacts remain unchanged, the run finishes `skipped` with reason `already-current`.
 Runtime maintenance can therefore succeed without changing the Git revision.
 A same-version explicit `--channel` or installation-method change finishes successfully.
@@ -756,7 +761,9 @@ for update status and Gateway health, then exits; this acknowledges the handoff,
 not a completed update. The acknowledging CLI exits with code `75` (`EX_TEMPFAIL`)
 so scripts cannot mistake accepted background work for a completed update. The
 detached helper remains the settlement authority; use the printed status and
-health commands to retrieve its terminal result. The helper launches staging and validation outside the
+health commands to retrieve its terminal result. A handoff accepted during candidate
+admission keeps this pending result after local staging cleanup; it does not create
+an update failure report. The helper launches staging and validation outside the
 Gateway's service boundary while the old Gateway keeps serving. It parks the Gateway
 only when the orchestrator reaches `activating`, then completes the existing
 commit-or-cancel handoff. Keep stdout connected to the agent: stopping the service

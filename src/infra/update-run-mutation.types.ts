@@ -24,6 +24,7 @@ type UpdateRunWriteInput = {
 
 type UpdateRunWriteResult =
   | { kind: "recorded"; record: UpdateRunRecord }
+  | { kind: "bookkeeping-skipped" }
   | { kind: "recovery-required"; recovery: UpdateRecoveryRecord };
 
 export type UpdateRunWriteOperations = {

@@ -15,6 +15,7 @@ import { compareAscii, sortJsonValueKeys } from "./lib/canonical-json.mjs";
 import { hasRequiredCrossOsSuites } from "./lib/cross-os-release-checks/suite-filter.mjs";
 import { candidateArtifactJsonFromBinding } from "./lib/full-release-candidate-reuse.mjs";
 import {
+  FULL_RELEASE_CHILD_EVIDENCE_JOB,
   MAX_RELEASE_ARTIFACT_BYTES,
   serializeReleaseArtifact,
 } from "./lib/full-release-evidence.mjs";
@@ -185,7 +186,7 @@ const HARD_GH_TRANSPORT_PATTERN =
 const RATE_LIMITED_403_PATTERN =
   /HTTP 403\b[\s\S]*(?:rate limit|abuse detection)|(?:rate limit|abuse detection)[\s\S]*HTTP 403\b/iu;
 const TRANSIENT_GH_TRANSPORT_PATTERN =
-  /HTTP 429\b|HTTP 5[0-9][0-9]\b|Server Error|secondary rate limit|API rate limit|abuse detection|error connecting to|context deadline exceeded|connection reset by peer|connection refused|TLS handshake timeout|i\/o timeout|timed out|\btimeout\b|network is unreachable|unexpected EOF|ETIMEDOUT|ECONNRESET|EAI_AGAIN/iu;
+  /HTTP 429\b|HTTP 5[0-9][0-9]\b|Server Error|secondary rate limit|API rate limit|abuse detection|error connecting to|context deadline exceeded|connection reset by peer|connection refused|TLS handshake timeout|i\/o timeout|timed out|\btimeout\b|network is unreachable|unexpected EOF|stream error: stream ID \d+; CANCEL; received from peer|ETIMEDOUT|ECONNRESET|EAI_AGAIN/iu;
 const RELEASE_GH_ARTIFACT_MISSING_LINE_PATTERN =
   /^(?:no valid artifacts found(?: to download)?|no artifact matches any of the names(?: or patterns)? provided|could not find any artifacts|artifact .+ not found)$/iu;
 const RELEASE_GH_ARTIFACT_CONTENT_ERROR_PATTERN =
@@ -1486,6 +1487,11 @@ export function planReleaseChildRerun({ childKey, jobs }) {
     .toSorted();
   if (failed.length === 0) {
     throw new Error(`${childKey} has no blocking failed job to rerun`);
+  }
+  // Receipt publication is best-effort at the workflow boundary. A green child
+  // can therefore need only this failed metadata job, never its passing workloads.
+  if (failed.length === 1 && failed[0] === FULL_RELEASE_CHILD_EVIDENCE_JOB) {
+    return { failed, mode: "receipt", producer: FULL_RELEASE_CHILD_EVIDENCE_JOB };
   }
   // These consumers bind their producer's artifact to the current run attempt, so a
   // failed-jobs rerun that leaves the green producer behind stays red (#161317).

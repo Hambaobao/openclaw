@@ -425,7 +425,10 @@ Keep this marker when removing a pin. Subsequent Doctor runs, restarts, and
 updates will not recreate it. Account pins cover only accounts present during
 migration. For trusted official plugins with older Doctor contracts, Doctor uses
 historical listener facts shipped with the Gateway. The installed plugin retains
-ownership of its other config migrations. Other plugins can remain pending while
+ownership of its other config migrations. During an update, these listener repairs
+also run when an installed official plugin is deferred until package convergence;
+its deferred code is not loaded, and replacement plugins retain their ownership.
+Other plugins can remain pending while
 other channels finish. Replacing a pending plugin runs the same migration through
 the installer's backed-up config publication before its new runtime starts.
 Update a retained older standalone plugin before removing its pin; older plugin
@@ -546,6 +549,19 @@ the plugin migration resumes.
 While a migration is pending, explicit config edits that would change or remove
 its retained inputs are refused with the recovery command. Unrelated settings
 remain writable. Complete the plugin migration before editing those inputs.
+
+## Blocked local plugins
+
+Doctor preserves the complete configuration entry and plugin policy for a local
+plugin rejected by discovery, including ownership and writable-path safety
+checks. A blocked plugin is not an uninstalled plugin. Its runtime remains
+blocked, and Doctor reports the path problem instead of removing its enablement
+or suggesting a registry reinstall for a local path. Fix the path and rerun
+`openclaw doctor --fix` as the account that runs the Gateway.
+
+This preservation also applies when an update invokes the candidate Doctor. It
+does not change the update execution account or repair files already made owned
+by another user.
 
 ## Retired TaskFlow Webhooks plugin
 

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import vm from "node:vm";
@@ -64,6 +65,18 @@ describe.skipIf(process.platform === "win32")("survivor loaded stop policy", () 
     expect(query()).toMatchObject({
       status: 0,
       stdout: "LoadState=loaded\nTimeoutStopUSec=330s\n",
+    });
+    expect(
+      systemctl(
+        "show",
+        "openclaw-gateway.service",
+        "--no-page",
+        "--property",
+        "TimeoutStopUSec,InvocationID,LoadState",
+      ),
+    ).toMatchObject({
+      status: 0,
+      stdout: "LoadState=loaded\nTimeoutStopUSec=330s\nInvocationID=\n",
     });
     expect(manager("stop-timeout-ms").stdout).toBe("330000\n");
     writeFileSync(unit, content.replace("TimeoutStopSec=330", "TimeoutStopSec=30"));
@@ -147,6 +160,7 @@ describe.skipIf(process.platform === "win32")("survivor loaded stop policy", () 
         writeSync: () => {},
       };
       vm.runInNewContext(body!.replace(/^import .*;\n/gm, ""), {
+        randomUUID,
         fs,
         spawn: () => ({ pid: 42, on: () => {}, once: () => {} }),
         execFileSync: (_binary: string, args: string[]) => {
@@ -293,6 +307,7 @@ describe.skipIf(process.platform === "win32")("survivor loaded stop policy", () 
         },
       }));
       vm.runInNewContext(body!.replace(/^import .*;\n/gm, ""), {
+        randomUUID,
         fs: {
           openSync: () => 1,
           closeSync: () => {},
@@ -459,6 +474,7 @@ describe.skipIf(process.platform === "win32")("survivor loaded stop policy", () 
         },
       }));
       vm.runInNewContext(body!.replace(/^import .*;\n/gm, ""), {
+        randomUUID,
         fs: {
           openSync: () => 1,
           closeSync: () => {},

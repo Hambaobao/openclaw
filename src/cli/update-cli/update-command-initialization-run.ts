@@ -39,12 +39,9 @@ import {
   type UpdateTargetSelection,
 } from "./update-command-initialization.js";
 import { preparePackageUpdateRuntime } from "./update-command-node-runtime.js";
+import { assertUpdatePackageActivationAdmission } from "./update-command-package-activation.js";
 import { UnreportedUpdateAdmissionOutcome } from "./update-command-result.js";
-import {
-  assertUpdatePackageActivationAdmission,
-  recordUpdateCommandTarget,
-  type prepareUpdateCommand,
-} from "./update-command-run.js";
+import { recordUpdateCommandTarget, type prepareUpdateCommand } from "./update-command-run.js";
 import { preflightUpdateCommandSchemas, previewUpdateCommand } from "./update-command-schema.js";
 import {
   resolveUpdateTargetEnv,
@@ -128,6 +125,7 @@ export async function initializeAndRunUpdate(
                 serviceRoot: selection.refusal
                   ? selection.refusal.report.serviceRoot
                   : selection.target.managedServiceRoot,
+                dryRun: opts.dryRun,
               };
               const originalCaptureWarnings: string[] = [];
               const initialization: InitializedUpdate = {

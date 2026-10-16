@@ -558,6 +558,11 @@ Native checkpoint work and file-size diagnostics run in the worker. Linux
 sidecar containment retains its synchronous scan at timer entry, before identity
 admission can refuse dispatch or close can clean up the original handle. Host
 admission and physical-identity checks remain on the host.
+While an offline maintenance scope retains a shared-state worker, its scheduled
+WAL work pauses so Doctor and update-recovery captures keep stable source bytes.
+Explicitly admitted maintenance remains available. The final maintenance client
+release resumes the same worker's normal ten-second checkpoint cadence; overlapping
+maintenance clients keep it paused until all release.
 Existing worker-local maintenance and synchronous offline/close checkpoints retain
 their owners; durability, schemas, retention, and update behavior are unchanged.
 

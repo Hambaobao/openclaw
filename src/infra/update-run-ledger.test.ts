@@ -1,4 +1,5 @@
 import { fork } from "node:child_process";
+import { expectDefined } from "@openclaw/normalization-core/expect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   UPDATE_RUN_DRIVER_LIMIT,
@@ -668,21 +669,26 @@ describe("update run ledger", () => {
         options,
       );
       clock.mockReturnValue(2_000);
-      finishUpdateRun(run.runId, { status }, options);
+      const nextAction = "Run openclaw update repair.";
+      finishUpdateRun(run.runId, { status, nextAction }, options);
       closeOpenClawStateDatabaseForTest();
 
       const persisted = getUpdateRun(run.runId, options);
+      const completion = { status: stepStatus, endedAtMs: 2_000 };
+      expect(persisted).toMatchObject({ phase: "finished", origin: { nextAction } });
+      expect(persisted?.steps.filter((step) => step.step === "requested")).toEqual([
+        { step: "requested", status: "completed", startedAtMs: 1_000, endedAtMs: 1_000 },
+      ]);
+      expect(finishUpdateRun(run.runId, { status, nextAction: "later" }, options)).toEqual(
+        persisted,
+      );
       expect(persisted?.steps.some((step) => step.status === "in_progress")).toBe(false);
       expect(persisted?.steps.find((step) => step.step === "openclaw doctor")).toEqual({
         step: "openclaw doctor",
-        status: stepStatus,
         startedAtMs: 1_000,
-        endedAtMs: 2_000,
+        ...completion,
       });
-      expect(persisted?.steps.find((step) => step.step === "validating")).toMatchObject({
-        status: stepStatus,
-        endedAtMs: 2_000,
-      });
+      expect(persisted?.steps.find((step) => step.step === "validating")).toMatchObject(completion);
       for (const step of recordedSteps) {
         expect(persisted?.steps.find((entry) => entry.step === step.step)).toEqual(step);
       }
@@ -718,13 +724,16 @@ describe("update run ledger", () => {
       let saved = createUpdateRun({ trigger: "cli" }, options);
       expect(() => {
         for (let index = 0; index < 130; index++) {
-          saved = recordUpdateRunStep(
-            saved.runId,
-            {
-              step: `finalize:${index}${bound === "bytes" ? "界".repeat(330) : ""}`,
-              status: "completed",
-            },
-            options,
+          saved = expectDefined(
+            recordUpdateRunStep(
+              saved.runId,
+              {
+                step: `finalize:${index}${bound === "bytes" ? "界".repeat(330) : ""}`,
+                status: "completed",
+              },
+              options,
+            ),
+            "required finalization receipt",
           );
         }
       }).toThrow(/retained step.*limit/);

@@ -193,6 +193,7 @@ export async function prepareSessionLifecycleDrain(
         }
         let controllerDrain = Promise.resolve(true);
         const replyRuns = resolveReplyOperationsForSession(params);
+        let lifecycleCleanupAuthorized = false;
         const cancellation = abortChatRunsForSessionKeyWithPartials({
           context: params.context,
           ops: createChatAbortOps(params.context),
@@ -213,21 +214,28 @@ export async function prepareSessionLifecycleDrain(
             });
           },
           onAuthorizedAfterQueuedAbort: () => {
+            lifecycleCleanupAuthorized = true;
             const cleared = clearSessionLifecycleQueues({
               ...queueTarget,
               assertCurrent: () => params.authorize?.(),
             });
-            let aborted = cleared.followupCleared > 0 || cleared.laneCleared > 0;
+            return cleared.followupCleared > 0 || cleared.laneCleared > 0;
+          },
+          onCancellationStarted: () => {
+            if (!lifecycleCleanupAuthorized) {
+              return;
+            }
+            // Let chat controllers publish cancellation before their reply becomes non-abortable.
             for (const operation of replyRuns) {
               params.authorize?.();
               if (isReplyOperationForSession(params, operation)) {
-                aborted = operation.abortByUser() || aborted;
+                operation.abortByUser();
               }
             }
             if (params.sessionId) {
-              aborted = abortEmbeddedAgentRun(params.sessionId) || aborted;
+              params.authorize?.();
+              abortEmbeddedAgentRun(params.sessionId);
             }
-            return aborted;
           },
         });
         // Observe failures immediately while the short mutation releases its queues.

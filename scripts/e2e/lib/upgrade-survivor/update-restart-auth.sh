@@ -142,6 +142,7 @@ start_gateway() {
   cat >"$supervisor_script" <<'SUPERVISOR'
 import fs from "node:fs";
 import { spawn, execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 const managerScript = process.env.OPENCLAW_SYSTEMCTL_SHIM_MANAGER_SCRIPT;
 const command = process.env.OPENCLAW_SYSTEMCTL_SHIM_EXEC_START;
@@ -173,6 +174,7 @@ const restartWindowMs = 60_000;
 const restartBurst = 5;
 const starts = [];
 let totalStarts = 0;
+let invocationId = "";
 let firstExit;
 let child;
 let activeGroupPid;
@@ -184,7 +186,7 @@ const publishRuntime = (pid, supervisorPid = process.pid) => {
   const file = `${daemonLog}.runtime.json`;
   // Both manager adapters observe the ExecStart child, not this synthetic manager.
   fs.writeFileSync(`${file}.pending`, JSON.stringify({
-    pid, supervisorPid, groupPid: activeGroupPid ?? 0, stopFailed,
+    pid, supervisorPid, groupPid: activeGroupPid ?? 0, stopFailed, invocationId,
     restarts: totalStarts - 1, entered: Number(process.hrtime.bigint() / 1000n),
   }));
   fs.renameSync(`${file}.pending`, file);
@@ -352,6 +354,8 @@ const start = () => {
   }
   starts.push(now);
   totalStarts++;
+  invocationId = randomUUID().replaceAll("-", "");
+  childEnv.INVOCATION_ID = invocationId;
   child = spawn("bash", ["-c", command], {
     detached: true,
     env: childEnv,
@@ -485,6 +489,10 @@ case "$command" in
       exit 0
     fi
     [ "$unit_name" = openclaw-gateway.service ] || exit 1
+    if [ "$property" = TimeoutStopUSec,InvocationID,LoadState ]; then
+      node "$manager_script" stop-policy --invocation-id
+      exit 0
+    fi
     if [ "$property" = LoadState,TimeoutStopUSec ]; then
       node "$manager_script" stop-policy
       exit 0

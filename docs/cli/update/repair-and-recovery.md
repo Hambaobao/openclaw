@@ -20,6 +20,11 @@ Unexpected exceptions retain the known update mode, resolved target, failed step
 and any recorded recovery outcome. Reports include a bounded, redacted error code
 or name and first message line through the same diagnostics as failed commands;
 unrecognized private text and stack traces are excluded from the public preview.
+Git preflight cleanup continues if its progress history cannot be recorded. The
+direct result retains a reporting warning; if the update was already failing,
+its exception retains both the original failure and the reporting failure. A
+reporting warning alone does not mean runtime verification failed. Uncertain
+command cleanup still preserves the temporary artifacts and blocks recovery.
 
 Choosing **Diagnose update failure** opens [Triage](/cli/triage), which starts the
 first directly launchable coding agent on `PATH`, in this order: Claude Code,
@@ -150,7 +155,10 @@ when you need a long-term copy.
 
 These captures are evidence for manual recovery. Active writers can change state
 during capture; an observed change leaves the capture incomplete and produces a
-warning. The set is not an atomic snapshot across active stores. Missing,
+warning. For databases, the warning names each database that changed after its
+snapshot or had no stable generation during it, followed by the backup's
+database warnings. A running Gateway that writes during capture is enough to
+cause this. The set is not an atomic snapshot across active stores. Missing,
 unreadable, or incomplete captures do not establish a safe
 rollback point. The updater process keeps optional debug-proxy persistence
 disabled because its update history can use an older database schema. Doctor
@@ -239,6 +247,21 @@ deleting database rows to work around this failure.
 
 ## `update repair`
 
+Repair exits nonzero with the original recovery command when an older package
+journal remains pending and the current CLI cannot settle it. It does not report
+successful repair or continue post-update maintenance while that record remains.
+
+For a record written by the published 2026.9.8 package recovery helper, repair
+can settle an aborted operation after rollback or finish publication into a
+missing installation when ctime or link-count drift invalidates the previous
+package's historical seal. It requires the recorded directory identity and package version,
+verifies launchers, and records: `legacy package record settled by identity and
+version; content could not be re-verified`. The original journal, helper, and
+remaining package evidence are preserved. This accepts unverified contents of
+reinstallable legacy package code; records written by current versions retain
+their existing verification rules. Use a CLI containing this fix: the original sealed helper
+cannot acquire newer recovery behavior.
+
 An older updater can leave package activation at `prepared` after refusing an
 update before publication. Run `openclaw update repair` from an installation
 containing this fix. Repair verifies that the original package and launchers are
@@ -278,7 +301,10 @@ from the compatible CLI. Archival failure after durable completion is a warning:
 evidence stays preserved and does not prevent repair finalization or a later update. Retained evidence is not deleted or used as
 authority for later updates. Unfinished operations still require a compatible
 recovery owner. This behavior does not deliver a newer repair implementation to
-an already-blocked older CLI; the first-hop installation limitation remains.
+an already-blocked older CLI. For completed `anchor-retired` history, use the
+[independent helper recovery](/install/updating#recover-a-completed-receipt-with-an-older-updater)
+to preserve the receipt and unblock the original updater without replacing its
+installation. Unfinished recovery retains the first-hop installation limitation.
 
 For a package update stranded by an older updater's launcher ownership checks,
 use the manual installation hop, then repair from the new CLI at the same root:
@@ -565,7 +591,12 @@ availability, installation, or load failures appear in
 `postUpdate.plugins.warnings`; finalization reports `status: "warning"` and exits
 successfully when required checks pass. Doctor maintenance admission refusals
 also finish with a warning when no data is at risk. Repair restores any service
-it stopped, leaves migrations pending, and names the next repair action. Errors
+it stopped and leaves migrations pending. When Doctor could not run, the saved
+run is `skipped` with reason `doctor-maintenance-pending`, and the report leads
+with the next action: stop the Gateway through its service owner, then rerun
+`openclaw update repair` with the same profile and state overrides. A standalone
+repair's generic failure is recorded as `repair-failed`; specific failure codes
+and failures belonging to an existing update keep their original reasons. Errors
 after repair writes begin, a live or unverified Gateway, unreadable state, active migration writes, unsettled
 cleanup, invalid configuration, and failed required readiness checks still exit nonzero.
 
@@ -575,9 +606,10 @@ service restoration, including when the Gateway is still starting or restoration
 also fails. A startup warning after otherwise successful Doctor repair does not
 clear a repair phase timeout.
 
-Recorded pending-migration warnings stop appearing after the migration owner
-records completion. Unrelated warnings and later or reintroduced obligations
-remain visible; the original update history is preserved.
+Recorded pending-migration warnings stop appearing when the plugin is no longer
+pending in the migration owner's current state, including warnings delivered
+after completion by a Doctor child. Unrelated warnings and reintroduced pending
+obligations remain visible; the original update history is preserved.
 
 After post-update or finalization work fails and its child processes settle,
 OpenClaw probes the installed Gateway using the normal startup and readiness

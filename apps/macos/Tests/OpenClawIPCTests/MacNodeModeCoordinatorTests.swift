@@ -1276,7 +1276,7 @@ struct MacNodeModeCoordinatorTests {
             configuredFingerprint: nil,
             storedFingerprint: "old"))
 
-        #expect(route.permitsTrustedPinReplacement(url: url, failure: failure))
+        #expect(route.trustedPinReplacementDecline(url: url, failure: failure) == nil)
     }
 
     @Test func `does not auto repair a redirected TLS authority`() throws {
@@ -1312,9 +1312,9 @@ struct MacNodeModeCoordinatorTests {
             systemTrustOk: true,
             port: 443)
 
-        #expect(!route.permitsTrustedPinReplacement(url: url, failure: redirectedHost))
-        #expect(!route.permitsTrustedPinReplacement(url: url, failure: redirectedPort))
-        #expect(!route.permitsTrustedPinReplacement(url: url, failure: otherStore))
+        #expect(route.trustedPinReplacementDecline(url: url, failure: redirectedHost) == .hostMismatch)
+        #expect(route.trustedPinReplacementDecline(url: url, failure: redirectedPort) == .portMismatch)
+        #expect(route.trustedPinReplacementDecline(url: url, failure: otherStore) == .pinStoreMismatch)
     }
 
     @Test func `does not auto repair untrusted remote pin mismatch`() throws {
@@ -1333,7 +1333,7 @@ struct MacNodeModeCoordinatorTests {
             configuredFingerprint: nil,
             storedFingerprint: "old"))
 
-        #expect(!route.permitsTrustedPinReplacement(url: url, failure: failure))
+        #expect(route.trustedPinReplacementDecline(url: url, failure: failure) == .systemTrustFailed)
     }
 
     @Test func `does not auto repair configured pin mismatch`() throws {
@@ -1352,7 +1352,7 @@ struct MacNodeModeCoordinatorTests {
             configuredFingerprint: "configured",
             storedFingerprint: "old"))
 
-        #expect(!route.permitsTrustedPinReplacement(url: url, failure: failure))
+        #expect(route.trustedPinReplacementDecline(url: url, failure: failure) == .configuredPin)
     }
 
     @Test(.gatewayTLSStoreIsolated) func `stale repair cannot replace a newer stored pin`() throws {
@@ -1412,7 +1412,7 @@ struct MacNodeModeCoordinatorTests {
             configuredFingerprint: nil,
             storedFingerprint: "old"))
 
-        #expect(route.permitsTrustedPinReplacement(url: url, failure: failure))
+        #expect(route.trustedPinReplacementDecline(url: url, failure: failure) == nil)
     }
 
     @Test func `does not auto repair untrusted loopback pin mismatch`() throws {
@@ -1431,6 +1431,6 @@ struct MacNodeModeCoordinatorTests {
             configuredFingerprint: nil,
             storedFingerprint: "old"))
 
-        #expect(!route.permitsTrustedPinReplacement(url: url, failure: failure))
+        #expect(route.trustedPinReplacementDecline(url: url, failure: failure) == .systemTrustFailed)
     }
 }

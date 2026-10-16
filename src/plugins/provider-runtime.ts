@@ -678,7 +678,7 @@ export async function resolveProviderOAuthCredentialWithPlugin(
     if (!refreshOAuth) {
       return { status: "unhandled" } as const;
     }
-    credential = await refreshOAuth(params.credential);
+    credential = await refreshOAuth.call(plugin, params.credential, params.config);
   }
   if (!credential) {
     return { status: "unhandled" } as const;
@@ -704,7 +704,12 @@ export function resolveProviderOAuthRefreshCapabilityWithPlugin(params: Provider
     : ({ status: "unhandled" } as const);
 }
 
-export const refreshProviderOAuthCredentialWithPlugin = asyncRuntimeHook("refreshOAuth");
+export async function refreshProviderOAuthCredentialWithPlugin(
+  params: ProviderRuntimeLookup & { context: OAuthCredential },
+) {
+  const plugin = resolveProviderRuntimePlugin(params);
+  return await plugin?.refreshOAuth?.(params.context, params.config);
+}
 
 export const buildProviderAuthDoctorHintWithPlugin = asyncRuntimeHook("buildAuthDoctorHint");
 

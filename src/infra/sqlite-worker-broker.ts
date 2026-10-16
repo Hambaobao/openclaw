@@ -19,6 +19,7 @@ import {
   resolveSqliteWorkerModuleUrl,
   retainSqliteWorkerAdmissionCleanup,
   retainSqliteWorkerAdmissionPathReferences,
+  suspendSqliteWorkerScheduledMaintenance,
   validateSqliteWorkerDatabaseLocator,
 } from "./sqlite-worker-broker-admission.js";
 import { createSqliteWorkerLifecycle } from "./sqlite-worker-broker-lifecycle.js";
@@ -183,6 +184,7 @@ export class SqliteWorkerBroker {
     options.signal?.throwIfAborted();
     options.assertCurrent?.();
     let actor = this.actors.get(key);
+    let resumeScheduledMaintenance: (() => void) | undefined;
     if (actor?.retirementRequested) {
       if (actor.retirement) {
         await wait(actor.retirement);
@@ -209,6 +211,10 @@ export class SqliteWorkerBroker {
         (actor.nativeLostObservers ??= new Set()).add(options.onNativeLost);
       }
       actor.references += 1;
+      resumeScheduledMaintenance = suspendSqliteWorkerScheduledMaintenance(
+        actor,
+        options.maintenanceScope,
+      );
     } else {
       const slot = await this.acquireSlot(options);
       try {
@@ -241,6 +247,10 @@ export class SqliteWorkerBroker {
         stateDatabasePath: options.stateDatabasePath,
       };
       this.actors.set(key, actor);
+      resumeScheduledMaintenance = suspendSqliteWorkerScheduledMaintenance(
+        actor,
+        options.maintenanceScope,
+      );
       slot.actors.add(actor);
       slot.pendingOpens -= 1;
       const opening = actor;
@@ -303,6 +313,7 @@ export class SqliteWorkerBroker {
         throw actor.slot.failed;
       }
     } catch (error) {
+      resumeScheduledMaintenance?.();
       this.lifecycle.releaseActorReference(actor);
       if (!actor.references) {
         const errors = [error];
@@ -367,6 +378,7 @@ export class SqliteWorkerBroker {
       release: async () => {
         if (!referenceReleased) {
           referenceReleased = true;
+          resumeScheduledMaintenance?.();
           this.lifecycle.releaseActorReference(owned);
           this.stores.delete(store);
           this.clients.delete(client);

@@ -2046,13 +2046,17 @@ Device pairing lists and lookups execute in the shared-state read-only workers.
 The pairing snapshot cache checks SQLite `data_version` there, including commits
 from a separate CLI connection. Workers project lists and node identity bindings;
 the Gateway installs bindings against the pairing revision without reopening
-SQLite. Historical inspection snapshots never publish live node authority.
+SQLite. A lookup or receipt at a newer revision marks the published set incomplete
+but keeps other devices' bindings; only a full list replaces the set.
+Historical inspection snapshots never publish live node authority.
 
 Pairing, approval, role-token, bootstrap, and node-surface mutations execute in
 the shared-state writer. Each synchronous transaction reads the authoritative
 rows and obtains current host policy or connection admission before mutation and
 again before commit. Commit receipts publish the revision and changed node
-bindings before callers continue; uncertain outcomes are not replayed. Node
+bindings before callers continue; uncertain outcomes are not replayed. Pending
+mutations leave published bindings usable because stored rows stay authoritative
+until commit and the next binding read installs the committed receipt. Node
 prompt preparation refreshes the published facts, and Web Push retains pairing
 and subscription admission through network start, releasing both before provider
 completion. APNs registration checks pairing in its worker transaction and

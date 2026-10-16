@@ -4,6 +4,10 @@ import {
   GATEWAY_SERVICE_SELECTOR_ENV_KEYS,
 } from "../../daemon/constants.js";
 import {
+  readServiceHeapExecArgv,
+  resolveGatewayHeapNodeOptions,
+} from "../../daemon/gateway-heap.js";
+import {
   clearFsSafeEnvFallback,
   fsSafeEnvInput,
   normalizeFsSafeNativeEnv,
@@ -205,6 +209,26 @@ export function disableUpdatedPackageCompileCacheEnv(env: NodeJS.ProcessEnv): No
   };
 }
 
+/** Carry service heap controls without changing the captured environment's other facts. */
+export function resolveUpdateServiceHeapEnv(
+  env: NodeJS.ProcessEnv,
+  processEnv: NodeJS.ProcessEnv = process.env,
+  programArguments: readonly string[] = [],
+): NodeJS.ProcessEnv {
+  const resolved = { ...env };
+  // An empty service value clears startup hooks, but must not discard the
+  // operator's heap budget for Doctor and other update children.
+  if (resolved.NODE_OPTIONS !== undefined && !resolved.NODE_OPTIONS.trim()) {
+    resolved.NODE_OPTIONS = resolveGatewayHeapNodeOptions(processEnv.NODE_OPTIONS);
+  }
+  const heapArgs = readServiceHeapExecArgv(programArguments);
+  if (heapArgs.length) {
+    // Node argv overrides NODE_OPTIONS. Project only heap controls, never service preloads.
+    resolved.NODE_OPTIONS = [resolved.NODE_OPTIONS, ...heapArgs].filter(Boolean).join(" ");
+  }
+  return resolved;
+}
+
 export function resolveUpdatedInstallCommandEnv(params?: {
   processEnv?: NodeJS.ProcessEnv;
   serviceEnv?: NodeJS.ProcessEnv;
@@ -219,10 +243,9 @@ export function resolveUpdatedInstallCommandEnv(params?: {
     : undefined;
   // SecretRefs may resolve from the updater's runtime env even when the
   // managed service intentionally omits resolved secrets from its definition.
-  return disableUpdatedPackageCompileCacheEnv({
-    ...processEnv,
-    ...serviceEnv,
-  });
+  return disableUpdatedPackageCompileCacheEnv(
+    resolveUpdateServiceHeapEnv({ ...processEnv, ...serviceEnv }, processEnv),
+  );
 }
 
 export function resolveOwnedManagedUpdateEnv(params: {

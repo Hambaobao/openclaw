@@ -53,6 +53,7 @@ import type {
   ManagedGatewayUpdateVerdict,
   ManagedServicePackageUpdatePlan,
 } from "./update-command-service-context-types.js";
+import { resolveUpdateServiceHeapEnv } from "./update-command-service-env.js";
 
 export class GatewayServiceUpdateOwnershipError extends Error {
   readonly failureFacts: UpdateFailureFact[];
@@ -288,7 +289,10 @@ export function readGatewayServiceStateForUpdate(
       loadForInspection,
       validateEnvBeforeStatusRead: assertGatewayServiceManagementAllowedForUpdate,
       timeoutMs,
-    });
+    }).then((state) => ({
+      ...state,
+      env: resolveUpdateServiceHeapEnv(state.env, env, state.command?.programArguments),
+    }));
   if (process.platform !== "linux" || inspection?.managerUid === undefined) {
     return read();
   }

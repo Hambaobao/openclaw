@@ -28,6 +28,7 @@ import {
 } from "./update-command-executor.js";
 import type { InitializedUpdate } from "./update-command-initialization.js";
 import { preparePackageUpdateRuntime } from "./update-command-node-runtime.js";
+import { assertUpdatePackageActivationAdmission } from "./update-command-package-activation.js";
 import type { StagedPackageInstallUpdate } from "./update-command-package.js";
 import {
   UpdateCommandFailure,
@@ -35,7 +36,6 @@ import {
   withUpdateAdmissionReporting,
 } from "./update-command-result.js";
 import {
-  assertUpdatePackageActivationAdmission,
   createUpdateRunProgress,
   prepareUpdateCommand,
   prepareMutableUpdateRuntime,
@@ -109,7 +109,7 @@ async function updateCommandWithRuntime(
       defaultRuntime.error("Warning: Debug HTTP capture is disabled during update dry runs.");
     }
     const { updateStateNeedsInitialization } = await import("./update-command-initialization.js");
-    assertUpdatePackageActivationAdmission(root, { serviceRoot });
+    assertUpdatePackageActivationAdmission(root, { serviceRoot, dryRun: inputOpts.dryRun });
     const needsInitialization = await updateStateNeedsInitialization(env);
     const captureOriginal =
       !inputOpts.dryRun &&
