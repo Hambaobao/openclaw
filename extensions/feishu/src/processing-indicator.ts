@@ -192,7 +192,13 @@ export function createFeishuProcessingIndicator(options: {
     // New receipt intent may arrive while another source's storage operation awaits.
     await load(source);
     const currentAndFresh = () =>
-      current() && !isFeishuMessageFeedbackStale(source.messageCreateTimeMs);
+      current() &&
+      (!isFeishuMessageFeedbackStale(source.messageCreateTimeMs) ||
+        // A live source that already showed Wait can finish long preparation.
+        // Replay/terminal guards remain closed, and Wait must be removed exactly first.
+        (kind === "typing" &&
+          source.receipt.wait.phase === "removed" &&
+          Boolean(source.receipt.wait.reactionId)));
     const reaction = source.receipt[kind];
     if (
       reaction.phase !== "idle" ||

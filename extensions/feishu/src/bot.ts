@@ -1638,6 +1638,10 @@ async function handleFeishuMessageTurn(params: FeishuMessageParams): Promise<voi
           }
 
           lane.lifecycle?.abortSignal.throwIfAborted();
+          if (variant.kind === "active") {
+            // Access and lane ownership are settled; preparation may compact before adoption.
+            processingStatus?.queued();
+          }
           const turnResult = await core.channel.inbound.run({
             channel: "feishu",
             accountId: route.accountId,
@@ -1764,6 +1768,8 @@ async function handleFeishuMessageTurn(params: FeishuMessageParams): Promise<voi
         });
 
       turnAdoptionLifecycle?.abortSignal.throwIfAborted();
+      // Show waiting feedback before core preparation; model inclusion still owns Typing.
+      processingStatus?.queued();
       log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);
       const turnResult = await core.channel.inbound.run({
         channel: "feishu",

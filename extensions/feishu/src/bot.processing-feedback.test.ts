@@ -51,7 +51,7 @@ describe("handleFeishuMessage processing feedback", () => {
       turnAdoptionLifecycle: sourceLifecycle,
       processingClaim: createStatusClaim(),
     });
-    expect(status.queued).toHaveBeenCalledOnce();
+    expect(status.queued).toHaveBeenCalledTimes(2);
     expect(status.included).toHaveBeenCalledOnce();
     expect(status.included).toHaveBeenCalledWith(includedRun);
     expect(sourceLifecycle.onRunIncluded).toHaveBeenCalledWith(includedRun);
@@ -91,6 +91,25 @@ describe("handleFeishuMessage processing feedback", () => {
       completion: completion.promise,
     });
     completion.resolve();
+  });
+
+  it("queues an authorized source before core preparation without adopting or including a run", async () => {
+    const status = createProcessingStatus();
+    const lifecycle = createStatusLifecycle();
+    mockDispatchReplyFromConfig.mockImplementationOnce(async () => {
+      expect(status.queued).toHaveBeenCalledOnce();
+      expect(status.included).not.toHaveBeenCalled();
+      expect(lifecycle.onAdopted).not.toHaveBeenCalled();
+      return { queuedFinal: false, counts: { final: 0 }, noVisibleReplyFallbackEligible: false };
+    });
+    await dispatchMessage({
+      cfg: createFeishuTestConfig({ dmPolicy: "open" }),
+      event: createFeishuTestEvent({ messageId: "msg-preparation-feedback" }),
+      processingStatus: status,
+      turnAdoptionLifecycle: lifecycle,
+      processingClaim: createStatusClaim(),
+    });
+    expect(status.settled).toHaveBeenCalledOnce();
   });
 
   it.each(["final", "suppressed", "error"] as const)(
@@ -142,4 +161,29 @@ describe("handleFeishuMessage processing feedback", () => {
     expect(status.included).not.toHaveBeenCalled();
     expect(status.settled).toHaveBeenCalledOnce();
   });
+
+  it.each(["disabled", "unmentioned"] as const)(
+    "does not queue feedback for a %s group source",
+    async (gate) => {
+      const status = createProcessingStatus();
+      await dispatchMessage({
+        cfg: createFeishuTestConfig({
+          groupPolicy: gate === "disabled" ? "disabled" : "open",
+          requireMention: true,
+        }),
+        event: createFeishuTestEvent({
+          messageId: `msg-group-${gate}-processing-status`,
+          chatId: "oc-gated-group",
+          chatType: "group",
+        }),
+        processingStatus: status,
+        turnAdoptionLifecycle: createStatusLifecycle(),
+        processingClaim: createStatusClaim(),
+      });
+      expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+      expect(status.queued).not.toHaveBeenCalled();
+      expect(status.included).not.toHaveBeenCalled();
+      expect(status.settled).toHaveBeenCalledOnce();
+    },
+  );
 });
